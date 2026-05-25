@@ -216,3 +216,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Custom
+registry/
+src/scripts/checkpoints/
+src/scripts/mlruns/
+mlflow.db
+mlruns/
+.idea/
+data/regular/electricity.csv
+data/regular/solar_AL.csv
+data/solar_AL.csv
