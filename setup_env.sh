@@ -22,4 +22,7 @@ uv pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_con
 echo ">>> Installing torch-spatiotemporal and matplotlib..."
 uv pip install torch-spatiotemporal matplotlib
 
+echo ">>> Installing requirements.txt..."
+uv pip install -r requirements.txt
+
 echo ">>> Done! Environment ready."
