@@ -227,3 +227,4 @@ mlruns/
 data/regular/electricity.csv
 data/regular/solar_AL.csv
 data/solar_AL.csv
+data/irregular/etth1/temp/

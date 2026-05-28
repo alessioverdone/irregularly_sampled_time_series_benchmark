@@ -183,7 +183,7 @@ _META_KEYS: frozenset = frozenset({
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _optuna_base_dir() -> str:
-    return os.path.join(Parameters().registry_dir, 'optuna')
+    return os.path.join(Parameters().registry_dir, 'optuna_prova')
 
 
 def _phase1_dir() -> str:
@@ -731,6 +731,7 @@ def phase3_comparison(
     seed_list: list[int],
     logs_root: str,
     free_error_run: bool = True,
+    use_grid_params: bool = True,
 ) -> list[dict]:
     """
     Fase 3: esegue ogni modello con la sua config definitiva (da Fase 2)
@@ -751,7 +752,12 @@ def phase3_comparison(
     print(f'  Seed: {seed_list}')
     print('═' * 72)
 
-    p2_dir   = _phase2_dir()
+    if use_grid_params:
+        p2_dir   = _phase2_dir()
+    else:
+        p2_dir = _phase1_dir()
+
+
     save_dir = _phase3_dir()
     os.makedirs(save_dir, exist_ok=True)
     all_rows: list[dict] = []
@@ -866,6 +872,10 @@ def run_pipeline(
     print(f'  Seed P2/3: {seed_list_phase23}')
     print(f'{"═" * 72}')
 
+    use_grid_params = False
+    if 2 in phases:
+        use_grid_params = True
+
     if 1 in phases:
         phase1_optuna(
             datasets=datasets,
@@ -892,6 +902,7 @@ def run_pipeline(
             seed_list=seed_list_phase23,
             logs_root=logs_root,
             free_error_run=free_error_run,
+            use_grid_params=use_grid_params,
         )
 
     print(f'\n{"═" * 72}')
@@ -909,7 +920,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description='Pipeline a 3 fasi: Optuna Search → Grid Fine → Comparison')
     parser.add_argument(
-        '--phase', type=int, nargs='+', default=[1, 2, 3],
+        '--phase', type=int, nargs='+', default=[3],
         choices=[1, 2, 3],
         help='Fasi da eseguire (default: 1 2 3). Esempio: --phase 2 3')
     args = parser.parse_args()
@@ -924,7 +935,7 @@ def main() -> None:
     SEED_LIST_PHASE1  = [654]
 
     # Fase 2 e 3: più seed per stabilità e intervalli di confidenza
-    SEED_LIST_PHASE23 = [654, 897, 26]
+    SEED_LIST_PHASE23 = [654, 897]  # 26
 
     # Numero di trial Optuna per coppia (dataset, model) in Fase 1.
     # Con 2 dataset e 6 modelli → 12 studi × 30 trial = 360 trial totali.
