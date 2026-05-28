@@ -91,7 +91,7 @@ class Parameters:
         self.seq_len = 96
         self.pred_len = 96
         self.label_len = 0
-        self.sparsity = 0.5
+        self.sparsity = 0.25
         self.mask_seed = 0
 
         # Trainer parameters

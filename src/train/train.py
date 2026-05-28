@@ -165,7 +165,7 @@ def _to_device(batch, device):
     return [v.to(device) if isinstance(v, torch.Tensor) else v for v in batch]
 
 
-def train(training, dataModuleInstance, run_params):
+def train(training, dataModuleInstance, run_params, trial=None):
     training.configure_optimizers()
 
     log_every = 50
@@ -243,6 +243,13 @@ def train(training, dataModuleInstance, run_params):
                     if early_stop_counter >= run_params.early_stop_patience:
                         print(f"Early stopping at epoch {epoch + 1}")
                         break
+
+            # Optuna per-epoch pruning (trial=None quando chiamato fuori da Fase 1)
+            if trial is not None:
+                trial.report(avg_val['val_mse'], step=epoch)
+                if trial.should_prune():
+                    import optuna
+                    raise optuna.TrialPruned()
 
     # ── MLflow: summary best metrics ────────────────────────────────────
     log_metrics(run_params, {

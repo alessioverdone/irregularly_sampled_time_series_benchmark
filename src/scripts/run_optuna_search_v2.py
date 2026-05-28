@@ -88,7 +88,7 @@ from src.utils.utils import (
 PHASE1_GLOBAL_SEARCH_SPACE: dict = {
     # 'lr':         {'type': 'float',       'low': 5e-5,  'high': 5e-3, 'log': True},
     'lr':         {'type': 'float', 'low': 5e-5, 'high': 5e-3, 'log': True},
-    'batch_size': {'type': 'categorical', 'choices': [32, 64]},
+    'batch_size': {'type': 'categorical', 'choices': [16, 32, 64]},
     # 'w_decay':    {'type': 'float',       'low': 0.0,   'high': 1e-3},
     'w_decay':    {'type': 'categorical', 'choices': [0.0]},
     'seq_len':    {'type': 'categorical', 'choices': [96]},
@@ -101,7 +101,7 @@ MODEL_SEARCH_SPACES: dict = {
         'dlinear_individual':  {'type': 'categorical', 'choices': [True, False]},
     },
     'nbeats': {
-        'nbeats_n_stacks':            {'type': 'int',         'low': 10, 'high': 50},
+        'nbeats_n_stacks':            {'type': 'int',         'low': 2,  'high': 20},
         'nbeats_layer_width':         {'type': 'categorical', 'choices': [64, 96]},
         'nbeats_n_fc_layers':         {'type': 'int',         'low': 2,  'high': 6},
         'nbeats_expansion_coeff_dim': {'type': 'categorical', 'choices': [16, 32, 64]},
@@ -154,7 +154,7 @@ MODEL_SEARCH_SPACES: dict = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 PHASE2_FLOAT_MULTIPLIERS: list[float] = [0.5, 1.0, 2.0]
-PHASE2_BATCH_CHOICES:     list[int]   = [32, 64]   # deve coincidere con PHASE1_GLOBAL
+PHASE2_BATCH_CHOICES:     list[int]   = [16, 32, 64]   # deve coincidere con PHASE1_GLOBAL
 
 
 # Chiavi di metadato nei .json di fase: NON sono iperparametri di training,
@@ -183,7 +183,7 @@ _META_KEYS: frozenset = frozenset({
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _optuna_base_dir() -> str:
-    return os.path.join(Parameters().registry_dir, 'optuna_prova')
+    return os.path.join(Parameters().registry_dir, 'optuna')
 
 
 def _phase1_dir() -> str:
@@ -219,10 +219,10 @@ def _save_json(path: str, data: dict | list) -> None:
         json.dump(data, f, indent=4, ensure_ascii=False, default=str)
 
 
-def _base_global_config(logs_dir: str) -> dict:
+def _base_global_config(logs_dir: str, max_epochs: int | None = None) -> dict:
     """Config globale condivisa da tutte le fasi (non contiene iperparametri di rete)."""
     os.makedirs(logs_dir, exist_ok=True)
-    return {
+    cfg = {
         'save_ckpts':               False,
         'early_stop_callback_flag': True,
         'save_logs':                True,
@@ -230,6 +230,9 @@ def _base_global_config(logs_dir: str) -> dict:
         'logging':                  True,
         'logs_dir':                 logs_dir,
     }
+    if max_epochs is not None:
+        cfg['max_epochs'] = max_epochs
+    return cfg
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -257,12 +260,12 @@ def _suggest_param(trial: optuna.Trial, name: str, spec: dict):
     raise ValueError(f"Tipo parametro sconosciuto: '{t}'")
 
 
-def _run_single_seed(run_params: Parameters) -> tuple:
+def _run_single_seed(run_params: Parameters, trial=None) -> tuple:
     if run_params.reproducible:
         setup_seed(run_params.seed)
     data_module_instance, run_params = get_datamodule(run_params)
     training_module = Training(run_params)
-    train(training_module, data_module_instance, run_params)
+    train(training_module, data_module_instance, run_params, trial=trial)
     res_test = test(training_module, data_module_instance, run_params)
     return training_module, res_test
 
@@ -368,7 +371,8 @@ def _p1_sample_combo(trial: optuna.Trial, dataset: str, model: str) -> dict:
 
 def _p1_objective(trial: optuna.Trial, dataset: str, model: str,
                   global_config: dict, seed_list: list[int],
-                  study_name: str, free_error_run: bool) -> float:
+                  study_name: str, free_error_run: bool,
+                  use_epoch_pruning: bool = False) -> float:
     combo = _p1_sample_combo(trial, dataset, model)
     print(f'\n  [P1 Trial {trial.number}]  {dataset}__{model}  '
           f'lr={combo["lr"]:.2e}  bs={combo["batch_size"]}  '
@@ -393,8 +397,9 @@ def _p1_objective(trial: optuna.Trial, dataset: str, model: str,
                 run_params.seed             = seed
                 run_params.mlflow_parent_id = base_params.mlflow_parent_id
 
+                seed_trial = trial if use_epoch_pruning else None
                 with mlflow_child_run(run_params, seed, params_dict, cfg_id):
-                    train_module, res_test = _run_single_seed(run_params)
+                    train_module, res_test = _run_single_seed(run_params, trial=seed_trial)
 
                 val_results, test_results = update_seed_metrics(
                     train_module, res_test, val_results, test_results)
@@ -405,10 +410,11 @@ def _p1_objective(trial: optuna.Trial, dataset: str, model: str,
                     **res_test[0],
                 })
 
-                # Segnale al MedianPruner: un punto per seed completato
-                trial.report(train_module.best_mse, step=idx)
-                if trial.should_prune():
-                    raise optuna.TrialPruned()
+                # Fallback post-seed quando epoch pruning è disabilitato
+                if not use_epoch_pruning:
+                    trial.report(train_module.best_mse, step=idx)
+                    if trial.should_prune():
+                        raise optuna.TrialPruned()
 
             log_aggregate_metrics(base_params, seed_metrics)
 
@@ -456,17 +462,25 @@ def phase1_optuna(
     seed_list: list[int],
     logs_root: str,
     free_error_run: bool = True,
+    timeout: int | None = None,
+    use_epoch_pruning: bool = False,
+    p1_max_epochs: int | None = None,
+    pruner_n_warmup_steps: int = 5,
 ) -> dict[str, dict]:
     """
     Fase 1: uno studio Optuna dedicato per ogni (dataset, model).
 
     Args:
-        datasets:       Dataset da esplorare.
-        models:         Modelli da esplorare.
-        n_trials:       Trial Optuna per coppia.
-        seed_list:      Seed per l'esecuzione (tipicamente 1 solo per velocità).
-        logs_root:      Directory radice per i log di questa pipeline run.
-        free_error_run: Se True, i trial falliti vengono registrati ma non bloccano.
+        datasets:              Dataset da esplorare.
+        models:                Modelli da esplorare.
+        n_trials:              Trial Optuna per coppia.
+        seed_list:             Seed per l'esecuzione (tipicamente 1 solo per velocità).
+        logs_root:             Directory radice per i log di questa pipeline run.
+        free_error_run:        Se True, i trial falliti vengono registrati ma non bloccano.
+        timeout:               Secondi max per coppia (None = nessun limite).
+        use_epoch_pruning:     Se True, il pruning avviene per-epoca dentro train().
+        p1_max_epochs:         Cap epoche per Fase 1 (None = usa default di Parameters).
+        pruner_n_warmup_steps: Epoche di warmup prima che il MedianPruner inizi a potare.
 
     Returns:
         Dict keyed by '{dataset}__{model}' con i best_params di ogni coppia.
@@ -496,7 +510,7 @@ def phase1_optuna(
 
             study_name  = f'p1_{pair_key}'
             pair_logs   = os.path.join(logs_root, 'phase1', pair_key)
-            global_cfg  = _base_global_config(pair_logs)
+            global_cfg  = _base_global_config(pair_logs, max_epochs=p1_max_epochs)
 
             print(f'\n  [P1] Avvio studio: {study_name}')
 
@@ -505,14 +519,16 @@ def phase1_optuna(
                 storage=db_uri,
                 load_if_exists=True,
                 direction='minimize',
-                sampler=optuna.samplers.TPESampler(seed=42),
-                pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=0),
+                sampler=optuna.samplers.TPESampler(seed=42, multivariate=True, group=True),
+                pruner=optuna.pruners.MedianPruner(
+                    n_startup_trials=5, n_warmup_steps=pruner_n_warmup_steps),
             )
 
             study.optimize(
-                lambda trial, d=dataset, m=model, gc=global_cfg: _p1_objective(
-                    trial, d, m, gc, seed_list, study_name, free_error_run),
+                lambda trial, d=dataset, m=model, gc=global_cfg, uep=use_epoch_pruning:
+                    _p1_objective(trial, d, m, gc, seed_list, study_name, free_error_run, uep),
                 n_trials=n_trials,
+                timeout=timeout,
                 show_progress_bar=True,
             )
 
@@ -831,18 +847,26 @@ def run_pipeline(
     n_trials_phase1: int,
     phases: tuple[int, ...] = (1, 2, 3),
     free_error_run: bool = True,
+    use_epoch_pruning: bool = False,
+    p1_max_epochs: int | None = None,
+    p1_timeout: int | None = None,
+    pruner_n_warmup_steps: int = 5,
 ) -> None:
     """
     Orchestratore della pipeline a 3 fasi.
 
     Args:
-        datasets:          Lista dei dataset da processare.
-        models:            Lista dei modelli da processare.
-        seed_list_phase1:  Seed usati in Fase 1 (tipicamente [1 seed] per velocità).
-        seed_list_phase23: Seed usati in Fase 2 e 3 (tipicamente 3 seed per stabilità).
-        n_trials_phase1:   Numero di trial Optuna per coppia (dataset, model) in Fase 1.
-        phases:            Fasi da eseguire, es. (1, 2, 3) oppure (2, 3).
-        free_error_run:    Se True, le eccezioni non bloccano la pipeline.
+        datasets:              Lista dei dataset da processare.
+        models:                Lista dei modelli da processare.
+        seed_list_phase1:      Seed usati in Fase 1 (tipicamente [1 seed] per velocità).
+        seed_list_phase23:     Seed usati in Fase 2 e 3 (tipicamente 3 seed per stabilità).
+        n_trials_phase1:       Numero di trial Optuna per coppia (dataset, model) in Fase 1.
+        phases:                Fasi da eseguire, es. (1, 2, 3) oppure (2, 3).
+        free_error_run:        Se True, le eccezioni non bloccano la pipeline.
+        use_epoch_pruning:     Se True, abilita pruning per-epoca dentro train() in Fase 1.
+        p1_max_epochs:         Cap epoche per Fase 1 (None = usa default di Parameters).
+        p1_timeout:            Secondi max per coppia in Fase 1 (None = nessun limite).
+        pruner_n_warmup_steps: Epoche di warmup prima che il MedianPruner inizi a potare.
     """
     timestamp = datetime.now().strftime('%Y-%m-%dT%H-%M-%S')
     logs_root = os.path.join(Parameters().logs_dir, f'pipeline_v2_{timestamp}')
@@ -850,17 +874,21 @@ def run_pipeline(
 
     # Manifest: salva la configurazione di questa pipeline run per riproducibilità
     _save_json(os.path.join(logs_root, 'pipeline_manifest.json'), {
-        'timestamp':         timestamp,
-        'datasets':          datasets,
-        'models':            models,
-        'seed_list_phase1':  seed_list_phase1,
-        'seed_list_phase23': seed_list_phase23,
-        'n_trials_phase1':   n_trials_phase1,
-        'phases':            list(phases),
-        'free_error_run':    free_error_run,
-        'phase1_dir':        _phase1_dir(),
-        'phase2_dir':        _phase2_dir(),
-        'phase3_dir':        _phase3_dir(),
+        'timestamp':              timestamp,
+        'datasets':               datasets,
+        'models':                 models,
+        'seed_list_phase1':       seed_list_phase1,
+        'seed_list_phase23':      seed_list_phase23,
+        'n_trials_phase1':        n_trials_phase1,
+        'phases':                 list(phases),
+        'free_error_run':         free_error_run,
+        'use_epoch_pruning':      use_epoch_pruning,
+        'p1_max_epochs':          p1_max_epochs,
+        'p1_timeout':             p1_timeout,
+        'pruner_n_warmup_steps':  pruner_n_warmup_steps,
+        'phase1_dir':             _phase1_dir(),
+        'phase2_dir':             _phase2_dir(),
+        'phase3_dir':             _phase3_dir(),
     })
 
     print(f'\n{"═" * 72}')
@@ -884,6 +912,10 @@ def run_pipeline(
             seed_list=seed_list_phase1,
             logs_root=logs_root,
             free_error_run=free_error_run,
+            timeout=p1_timeout,
+            use_epoch_pruning=use_epoch_pruning,
+            p1_max_epochs=p1_max_epochs,
+            pruner_n_warmup_steps=pruner_n_warmup_steps,
         )
 
     if 2 in phases:
@@ -920,7 +952,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description='Pipeline a 3 fasi: Optuna Search → Grid Fine → Comparison')
     parser.add_argument(
-        '--phase', type=int, nargs='+', default=[3],
+        '--phase', type=int, nargs='+', default=[1,3],
         choices=[1, 2, 3],
         help='Fasi da eseguire (default: 1 2 3). Esempio: --phase 2 3')
     args = parser.parse_args()
@@ -935,14 +967,36 @@ def main() -> None:
     SEED_LIST_PHASE1  = [654]
 
     # Fase 2 e 3: più seed per stabilità e intervalli di confidenza
-    SEED_LIST_PHASE23 = [654, 897]  # 26
+    SEED_LIST_PHASE23 = [654, 897, 26]  # 26
 
     # Numero di trial Optuna per coppia (dataset, model) in Fase 1.
     # Con 2 dataset e 6 modelli → 12 studi × 30 trial = 360 trial totali.
-    N_TRIALS_PHASE1   = 30
+    N_TRIALS_PHASE1   = 25
 
     # Se True, le eccezioni in un trial/run vengono loggiate ma non bloccano.
     FREE_ERROR_RUN    = True
+
+    # ── Parametri di velocità Fase 1 ─────────────────────────────────────────
+    # Pruning per-epoca: True = il trial viene potato durante train() se la
+    # val_mse è peggiore della mediana dei trial già completati a quella epoca.
+    # False = comportamento legacy (report solo a fine seed, pruning decorativo).
+    USE_EPOCH_PRUNING     = True
+
+    # Epoche di warmup prima che il MedianPruner inizi a potare i trial.
+    # Con epoch pruning attivo, usare almeno 3-5 per evitare tagli prematuri.
+    PRUNER_N_WARMUP_STEPS = 3
+
+    # Cap sul numero di epoche in Fase 1. None = usa il default di Parameters
+    # (100 epoche). Un valore ridotto (es. 30) limita il caso peggiore e
+    # accelera l'esplorazione: il ranking relativo è più importante del valore
+    # assoluto. L'early stopping rimane attivo e può fermare prima.
+    PHASE1_MAX_EPOCHS     = 30
+
+    # Timeout in secondi per coppia (dataset, model) in Fase 1.
+    # None = nessun limite. Se si passa sia n_trials che timeout, vince il
+    # primo che viene raggiunto. Il timeout viene controllato tra un trial e
+    # l'altro (non interrompe un trial già in corso).
+    PHASE1_TIMEOUT_SECS   = 10800  # (max 3 ore per coppia)
 
     run_pipeline(
         datasets=DATASETS,
@@ -952,6 +1006,10 @@ def main() -> None:
         n_trials_phase1=N_TRIALS_PHASE1,
         phases=tuple(args.phase),
         free_error_run=FREE_ERROR_RUN,
+        use_epoch_pruning=USE_EPOCH_PRUNING,
+        p1_max_epochs=PHASE1_MAX_EPOCHS,
+        p1_timeout=PHASE1_TIMEOUT_SECS,
+        pruner_n_warmup_steps=PRUNER_N_WARMUP_STEPS,
     )
 
 
