@@ -102,32 +102,32 @@ MODEL_SEARCH_SPACES: dict = {
     },
     'nbeats': {
         'nbeats_n_stacks':            {'type': 'int',         'low': 10, 'high': 50},
-        'nbeats_layer_width':         {'type': 'categorical', 'choices': [64, 128]},
+        'nbeats_layer_width':         {'type': 'categorical', 'choices': [64, 96]},
         'nbeats_n_fc_layers':         {'type': 'int',         'low': 2,  'high': 6},
         'nbeats_expansion_coeff_dim': {'type': 'categorical', 'choices': [16, 32, 64]},
         'dropout':                    {'type': 'float',       'low': 0.0, 'high': 0.4},
     },
     'lstm': {
-        'latent_dim': {'type': 'categorical', 'choices': [16, 32, 64, 128]},
+        'latent_dim': {'type': 'categorical', 'choices': [16, 32, 64, 96]},
         'num_layers': {'type': 'int',         'low': 1,  'high': 4},
         'dropout':    {'type': 'float',       'low': 0.0, 'high': 0.4},
     },
     'mtand': {
         'latent_dim':   {'type': 'categorical', 'choices': [8, 16, 32]},
         'nhidden':      {'type': 'categorical', 'choices': [16, 32, 64]},
-        'embed_time':   {'type': 'categorical', 'choices': [32, 64, 128]},
+        'embed_time':   {'type': 'categorical', 'choices': [32, 64, 96]},
         'num_heads':    {'type': 'categorical', 'choices': [1, 2, 4]},
         'n_ref_points': {'type': 'categorical', 'choices': [64, 128, 256]},
     },
     'hi-patch': {
-        'hid_dim':    {'type': 'categorical', 'choices': [32, 64, 128]},
+        'hid_dim':    {'type': 'categorical', 'choices': [32, 64, 96]},
         'nlayer':     {'type': 'int',         'low': 1, 'high': 4},
         'nhead':      {'type': 'categorical', 'choices': [1, 2, 4]},
         'patch_size': {'type': 'categorical', 'choices': [0.0625, 0.125, 0.25]},
         'stride':     {'type': 'categorical', 'choices': [0.0625, 0.125, 0.25]},
     },
     'tpatch-gnn': {
-        'hid_dim':    {'type': 'categorical', 'choices': [32, 64, 128]},
+        'hid_dim':    {'type': 'categorical', 'choices': [32, 64, 96]},
         'nlayer':     {'type': 'int',         'low': 1, 'high': 4},
         'nhead':      {'type': 'categorical', 'choices': [1, 2, 4]},
         'te_dim':     {'type': 'categorical', 'choices': [5, 10, 20]},
@@ -929,7 +929,7 @@ def main() -> None:
     # Modifica questi valori per personalizzare la pipeline.
 
     DATASETS          = ['etth1']
-    MODELS            = ['mtand', 'hi-patch', 'tpatch-gnn']
+    MODELS            = ['mtand', 'hi-patch', 'tpatch-gnn'] # 'nbeats', 'lstm', 'dlinear'
 
     # Fase 1: 1 solo seed per massimizzare la velocità di esplorazione
     SEED_LIST_PHASE1  = [654]
@@ -953,6 +953,7 @@ def main() -> None:
         phases=tuple(args.phase),
         free_error_run=FREE_ERROR_RUN,
     )
+
 
 
 if __name__ == '__main__':

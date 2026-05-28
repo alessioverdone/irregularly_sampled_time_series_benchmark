@@ -58,7 +58,7 @@ class Parameters:
         # }
 
         # Path
-        self.dataset = "ettm2"  #  ['etth1', 'etth2', 'ettm1', 'ettm2', 'electricity', 'solar']
+        self.dataset = "etth1"  #  ['etth1', 'etth2', 'ettm1', 'ettm2', 'electricity', 'solar']
         self.data_dir = os.path.join(project_dir, 'data')
         self.data_dir_irr = os.path.join(self.data_dir, 'irregular')
         self.registry_dir = os.path.join(project_dir, 'registry')
@@ -85,7 +85,7 @@ class Parameters:
         self.model = 'dlinear'  # ['mtand', 'hi-patch', 'tpatch-gnn', 'lstm']
         self.irregular_time_series = True
         self.irregular_time_series_pattern = 'static'  # ['static' 'dynamic']
-        self.mechanism = "async"  # ['mcar', 'burst', 'periodic', 'async']
+        self.mechanism = "periodic"  # ['mcar', 'burst', 'periodic', 'async']
 
         # Data
         self.seq_len = 96
@@ -98,7 +98,7 @@ class Parameters:
         self.accelerator = 'gpu'
         self.data_device = 'cpu'
         self.device = torch.device('cuda' if self.accelerator == 'gpu' and torch.cuda.is_available() else 'cpu')
-        self.max_epochs = 5
+        self.max_epochs = 100
         self.check_val_every_n_epoch = 2
         self.enable_progress_bar = True
         self.log_every_n_steps = 300
